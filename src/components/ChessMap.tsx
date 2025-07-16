@@ -9,12 +9,12 @@ import TileInfo from './TileInfo';
 import { cn } from '@/lib/utils';
 
 // Custom tile layer for chess positions
-class ChessTileLayer extends L.TileLayer {
+class ChessTileLayer extends L.GridLayer {
   private loadedTiles: Map<string, ChessPosition> = new Map();
   private onTileUpdate: (tileKey: string, position: ChessPosition) => void;
 
-  constructor(urlTemplate: string, options: L.TileLayerOptions, onTileUpdate: (tileKey: string, position: ChessPosition) => void) {
-    super(urlTemplate, options);
+  constructor(options: L.GridLayerOptions, onTileUpdate: (tileKey: string, position: ChessPosition) => void) {
+    super(options);
     this.onTileUpdate = onTileUpdate;
   }
 
@@ -34,7 +34,8 @@ class ChessTileLayer extends L.TileLayer {
     // Draw tile
     this.drawTile(tile, position);
     
-    done(null, tile);
+    // Call done callback to indicate tile is ready
+    setTimeout(() => done(null, tile), 0);
     return tile;
   }
 
@@ -126,7 +127,7 @@ const ChessMap: React.FC<ChessMapProps> = ({ className }) => {
     mapRef.current = map;
 
     // Create custom chess tile layer
-    const chessTileLayer = new ChessTileLayer('', {
+    const chessTileLayer = new ChessTileLayer({
       attribution: 'Chess Universe',
       tileSize: 256,
       maxZoom: 10,
