@@ -4,6 +4,7 @@ import path from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  base: '/chess-universe-mapper/',
   server: {
     host: "::",
     port: 8080,
