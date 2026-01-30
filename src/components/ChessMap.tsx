@@ -149,8 +149,8 @@ const ChessMap: React.FC<ChessMapProps> = ({ className }) => {
     const size = map.getCanvas().getBoundingClientRect();
 
     const tileSize = 256;
-    const nw = map.project(bounds.getNorthWest(), zoom);
-    const se = map.project(bounds.getSouthEast(), zoom);
+    const nw = map.project(bounds.getNorthWest());
+    const se = map.project(bounds.getSouthEast());
 
     const startX = Math.floor(nw.x / tileSize);
     const endX = Math.floor(se.x / tileSize);
