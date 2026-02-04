@@ -14,7 +14,7 @@ const App = () => (
       <div className="dark">
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <BrowserRouter basename="/chess-universe-mapper">
           <Routes>
             <Route path="/" element={<Index />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

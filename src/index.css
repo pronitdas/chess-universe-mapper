@@ -125,3 +125,34 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  .bg-glass-bg {
+    background-color: hsl(var(--glass-bg));
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .border-glass-border {
+    border-color: hsl(var(--glass-border));
+  }
+
+  .bg-glass {
+    background: linear-gradient(135deg, hsl(220 13% 18% / 0.9), hsl(220 13% 22% / 0.85));
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+
+  .animate-pulse-chess {
+    animation: pulse-chess 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-chess {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+}

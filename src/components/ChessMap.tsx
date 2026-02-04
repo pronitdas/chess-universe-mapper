@@ -1,59 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
-import { generateChessPosition, ChessPosition, TileCoords } from '@/utils/chessLogic';
+import { generateChessPosition, ChessPosition, TileCoords, generateTileDataURL } from '@/utils/chessLogic';
 import PositionPanel from './PositionPanel';
 import ControlPanel from './ControlPanel';
 import StatusPanel from './StatusPanel';
 import TileInfo from './TileInfo';
 import { cn } from '@/lib/utils';
 
-const CHESS_TILE_SOURCE = 'chess-tiles';
-
 interface ChessMapProps {
   className?: string;
 }
 
-// Generate a canvas data URL for a chess tile
-function generateTileCanvas(position: ChessPosition): string {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
-
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(0, 0, 256, 256);
-
-  ctx.strokeStyle = '#4ecdc4';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, 254, 254);
-
-  const boardSize = 120;
-  const boardX = (256 - boardSize) / 2;
-  const boardY = 40;
-  const squareSize = boardSize / 8;
-
-  for (let row = 0; row < 8; row++) {
-    for (let col = 0; col < 8; col++) {
-      const isLight = (row + col) % 2 === 0;
-      ctx.fillStyle = isLight ? '#f0d9b5' : '#b58863';
-      ctx.fillRect(boardX + col * squareSize, boardY + row * squareSize, squareSize, squareSize);
-    }
-  }
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 16px Arial';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${position.metadata.games.toLocaleString()} games`, 128, 180);
-
-  ctx.font = '14px Arial';
-  ctx.fillStyle = '#888';
-  ctx.fillText(`ELO: ${position.metadata.avgElo}`, 128, 200);
-  ctx.fillText(`Win: ${position.metadata.winRate}%`, 128, 220);
-
-  return canvas.toDataURL();
-}
+const TILE_SIZE = 256;
+const MAX_ZOOM = 10;
 
 const ChessMap: React.FC<ChessMapProps> = ({ className }) => {
   const [selectedPosition, setSelectedPosition] = useState<ChessPosition | null>(null);
@@ -62,116 +20,155 @@ const ChessMap: React.FC<ChessMapProps> = ({ className }) => {
   const [tileCount, setTileCount] = useState(0);
   const [workerStatus, setWorkerStatus] = useState<'idle' | 'processing' | 'generating'>('idle');
   const [showPositionPanel, setShowPositionPanel] = useState(false);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileDataRef = useRef<Map<string, ChessPosition>>(new Map());
-  const containerRef = useRef<HTMLDivElement>(null);
+  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const rafRef = useRef<number>(0);
+  const isDraggingRef = useRef(false);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
+  const getTileKey = (x: number, y: number, z: number) => `${z},${x},${y}`;
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: {
-        version: 8,
-        name: 'Chess Map Style',
-        sources: {},
-        layers: [
-          {
-            id: 'background',
-            type: 'background',
-            paint: {
-              'background-color': '#0a0a0a'
-            }
-          }
-        ],
-        glyphs: 'https://demotiles.mapbox.com/font/{fontstack}/{range}.pbf'
-      },
-      center: [0, 0],
-      zoom: 0,
-      minZoom: 0,
-      maxZoom: 10,
-      attributionControl: false
-    });
+  const getTileImage = useCallback((x: number, y: number, z: number): HTMLImageElement | null => {
+    const key = getTileKey(x, y, z);
+    if (imageCacheRef.current.has(key)) {
+      const img = imageCacheRef.current.get(key)!;
+      if (img.complete) return img;
+      return null;
+    }
 
-    mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-
-    map.on('load', () => {
-      map.addSource(CHESS_TILE_SOURCE, {
-        type: 'raster',
-        tiles: [],
-        tileSize: 256
-      });
-
-      map.addLayer({
-        id: 'chess-tiles-layer',
-        type: 'raster',
-        source: CHESS_TILE_SOURCE,
-        paint: {
-          'raster-opacity': 1,
-          'raster-brightness-max': 1,
-          'raster-brightness-min': 0.1
-        }
-      });
-    });
-
-    map.on('click', (e) => {
-      const zoom = map.getZoom();
-      const point = e.point;
-      const tileX = Math.floor(point.x / 256);
-      const tileY = Math.floor(point.y / 256);
-      const coords = { x: tileX, y: tileY, z: Math.floor(zoom) };
-      const position = generateChessPosition(coords);
-
-      setSelectedPosition(position);
-      setTileInfo({ coords, fen: position.fen });
-      setShowPositionPanel(true);
-
-      const tileKey = `${coords.z},${coords.x},${coords.y}`;
-      tileDataRef.current.set(tileKey, position);
-      setTileCount(tileDataRef.current.size);
-    });
-
-    map.on('zoomend', () => setZoomLevel(map.getZoom()));
-    map.on('moveend', () => setTileCount(tileDataRef.current.size));
-    setZoomLevel(map.getZoom());
-
-    return () => { map.remove(); };
+    const img = new Image();
+    img.src = generateTileDataURL({ x, y, z });
+    img.onload = () => {
+      if (!isDraggingRef.current) {
+        requestAnimationFrame(() => drawTiles());
+      }
+    };
+    imageCacheRef.current.set(key, img);
+    return null;
   }, []);
 
-  useEffect(() => {
-    if (!mapRef.current || !mapRef.current.isStyleLoaded()) return;
+  const drawTiles = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const map = mapRef.current;
-    const zoom = Math.floor(map.getZoom());
-    const bounds = map.getBounds();
-    const size = map.getCanvas().getBoundingClientRect();
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    const tileSize = 256;
-    const nw = map.project(bounds.getNorthWest());
-    const se = map.project(bounds.getSouthEast());
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
 
-    const startX = Math.floor(nw.x / tileSize);
-    const endX = Math.floor(se.x / tileSize);
-    const startY = Math.floor(nw.y / tileSize);
-    const endY = Math.floor(se.y / tileSize);
+    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+    }
+
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, width, height);
+
+    const centerX = width / 2 + offset.x;
+    const centerY = height / 2 + offset.y;
+
+    const startX = Math.floor((centerX - width / 2) / TILE_SIZE);
+    const endX = Math.ceil((centerX + width / 2) / TILE_SIZE);
+    const startY = Math.floor((centerY - height / 2) / TILE_SIZE);
+    const endY = Math.ceil((centerY + height / 2) / TILE_SIZE);
 
     for (let x = startX; x <= endX; x++) {
       for (let y = startY; y <= endY; y++) {
-        const coords = { x, y, z: zoom };
-        const tileKey = `${coords.z},${coords.x},${coords.y}`;
+        const tileX = x * TILE_SIZE - centerX + width / 2;
+        const tileY = y * TILE_SIZE - centerY + height / 2;
 
-        if (!tileDataRef.current.has(tileKey)) {
-          const position = generateChessPosition(coords);
-          tileDataRef.current.set(tileKey, position);
-          tileDataRef.current.set(`canvas-${tileKey}`, position);
+        const img = getTileImage(x, y, zoomLevel);
+
+        if (img) {
+          ctx.drawImage(img, tileX, tileY, TILE_SIZE, TILE_SIZE);
+        } else {
+          ctx.fillStyle = '#2a2a4e';
+          ctx.fillRect(tileX, tileY, TILE_SIZE, TILE_SIZE);
+          ctx.strokeStyle = '#3a3a6e';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(tileX, tileY, TILE_SIZE, TILE_SIZE);
+        }
+
+        if (!tileDataRef.current.has(getTileKey(x, y, zoomLevel))) {
+          const position = generateChessPosition({ x, y, z: zoomLevel });
+          tileDataRef.current.set(getTileKey(x, y, zoomLevel), position);
         }
       }
     }
 
     setTileCount(tileDataRef.current.size);
-  }, [zoomLevel]);
+  }, [offset, zoomLevel, getTileImage]);
+
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => drawTiles());
+
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [drawTiles]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    setOffset({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    isDraggingRef.current = false;
+    setIsDragging(false);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -1 : 1;
+    const newZoom = Math.max(0, Math.min(MAX_ZOOM, zoomLevel + delta));
+    if (newZoom !== zoomLevel) {
+      setZoomLevel(newZoom);
+      imageCacheRef.current.clear();
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (isDragging) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const centerX = width / 2 + offset.x;
+    const centerY = height / 2 + offset.y;
+
+    const tileX = Math.floor((clickX - (width / 2 - centerX)) / TILE_SIZE);
+    const tileY = Math.floor((clickY - (height / 2 - centerY)) / TILE_SIZE);
+
+    const coords = { x: tileX, y: tileY, z: zoomLevel };
+    const position = generateChessPosition(coords);
+
+    setSelectedPosition(position);
+    setTileInfo({ coords, fen: position.fen });
+    setShowPositionPanel(true);
+
+    tileDataRef.current.set(getTileKey(tileX, tileY, zoomLevel), position);
+  };
 
   const handleGenerateMoreTiles = () => {
     setWorkerStatus('generating');
@@ -188,56 +185,94 @@ const ChessMap: React.FC<ChessMapProps> = ({ className }) => {
   };
 
   const handleExportPMTiles = () => {
-    console.log('Exporting to PMTiles format...');
     alert('PMTiles export functionality would be implemented here!');
   };
 
+  const handleZoomIn = () => {
+    if (zoomLevel < MAX_ZOOM) {
+      setZoomLevel(zoomLevel + 1);
+      imageCacheRef.current.clear();
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (zoomLevel > 0) {
+      setZoomLevel(zoomLevel - 1);
+      imageCacheRef.current.clear();
+    }
+  };
+
+  const handleResetView = () => {
+    setZoomLevel(0);
+    setOffset({ x: 0, y: 0 });
+    imageCacheRef.current.clear();
+  };
+
   return (
-    <div className={cn('relative h-screen w-screen', className)}>
-      <div
-        ref={containerRef}
-        className="h-full w-full bg-background"
-        style={{ height: '100vh', width: '100vw' }}
+    <div className={cn('relative h-screen w-screen overflow-hidden bg-[#1a1a2e]', className)}>
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 z-0 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onWheel={handleWheel}
+        onClick={handleClick}
+        style={{ width: '100%', height: '100%' }}
       />
 
       <ControlPanel
         onGenerateMoreTiles={handleGenerateMoreTiles}
         onShowStats={handleShowStats}
         onExportPMTiles={handleExportPMTiles}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetView={handleResetView}
         tileCount={tileCount}
         zoomLevel={zoomLevel}
-        className="absolute top-4 left-4 w-64 z-[1000]"
+        className="absolute top-4 left-4 w-72 z-50"
       />
 
       {showPositionPanel && selectedPosition && (
-        <>
-          <PositionPanel
-            data={selectedPosition}
-            className="absolute top-4 right-4 w-80 max-h-[calc(100vh-2rem)] overflow-y-auto z-[1000]"
-          />
-          <button
-            onClick={() => setShowPositionPanel(false)}
-            className="absolute top-4 right-4 z-[1001] w-8 h-8 bg-background/80 hover:bg-background border border-border rounded-full flex items-center justify-center transition-colors"
-          >
-            <span className="text-lg">×</span>
-          </button>
-        </>
+        <PositionPanel
+          data={selectedPosition}
+          onClose={() => setShowPositionPanel(false)}
+          className="absolute top-4 right-4 w-80 max-h-[calc(100vh-2rem)] overflow-y-auto z-50"
+        />
       )}
 
       <StatusPanel
         workerStatus={workerStatus}
         tileCount={tileCount}
         zoomLevel={zoomLevel}
-        className="absolute bottom-4 left-4 w-64 z-[1000]"
+        className="absolute bottom-4 left-4 w-64 z-50"
       />
 
       {tileInfo && (
         <TileInfo
           coords={tileInfo.coords}
           fen={tileInfo.fen}
-          className="absolute bottom-4 right-4 w-80 z-[1000]"
+          className="absolute bottom-4 right-4 w-80 z-50"
         />
       )}
+
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-50">
+        <button
+          onClick={handleZoomOut}
+          disabled={zoomLevel === 0}
+          className="w-10 h-10 bg-glass hover:bg-background border border-border rounded-full flex items-center justify-center text-lg font-bold disabled:opacity-50 transition-all shadow-lg"
+        >
+          −
+        </button>
+        <button
+          onClick={handleZoomIn}
+          disabled={zoomLevel === MAX_ZOOM}
+          className="w-10 h-10 bg-glass hover:bg-background border border-border rounded-full flex items-center justify-center text-lg font-bold disabled:opacity-50 transition-all shadow-lg"
+        >
+          +
+        </button>
+      </div>
     </div>
   );
 };

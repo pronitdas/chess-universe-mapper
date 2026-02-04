@@ -39,7 +39,7 @@ const StatusPanel: React.FC<StatusPanelProps> = ({
 
   return (
     <Card className={cn(
-      'backdrop-blur-xl bg-glass-bg border-glass-border shadow-lg',
+      'bg-glass backdrop-blur-xl border-border/30 shadow-lg',
       className
     )}>
       <CardContent className="p-4">

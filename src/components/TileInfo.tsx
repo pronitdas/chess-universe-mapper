@@ -12,7 +12,7 @@ interface TileInfoProps {
 const TileInfo: React.FC<TileInfoProps> = ({ coords, fen, className }) => {
   return (
     <Card className={cn(
-      'backdrop-blur-xl bg-glass-bg border-glass-border shadow-lg',
+      'bg-glass backdrop-blur-xl border-border/30 shadow-lg',
       className
     )}>
       <CardContent className="p-4 space-y-3">
